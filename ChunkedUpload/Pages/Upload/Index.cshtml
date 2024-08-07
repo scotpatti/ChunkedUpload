@@ -1,0 +1,74 @@
+﻿@page
+@model ChunkedUpload.Pages.Upload.IndexModel
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery Xsrf
+@functions {
+    public string GetAntiXsrfRequestToken()
+    {
+        var token = Xsrf.GetAndStoreTokens(HttpContext).RequestToken;
+        return string.IsNullOrEmpty(token) ? string.Empty : token;
+    }
+}
+@{
+    ViewData["Title"] = "Uploading large file in chunks";
+}
+
+<h1>Uploading a Large File in Chunks</h1>
+<form id="fileinput">
+    <input type="file" id="fileInput" />
+    <button id="upload" onclick="uploadFile()">Upload</button>
+</form>
+
+<div id="progress"></div>
+@section Scripts {
+    <script type="text/javascript">
+        // Right now this only uploads one file! I'm assuming that large file(s) should
+        // be zipped up and hence we only need one file. This can be easily updated to
+        // upload multiple files.
+        async function uploadFile() {
+            event.preventDefault(); // Prevent form submission from happening.
+
+            const JwtToken = '@Model.Token';
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            const chunkSize = 30000000; // 30 Mb or you could set it to 1048576 = 1MB
+            const chunks = Math.ceil(file.size / chunkSize);
+            let currentChunk = 0;
+
+            while (currentChunk < chunks) {
+                const start = currentChunk * chunkSize;
+                const end = Math.min(start + chunkSize, file.size); //writing either a whole chunk or the rest of the file
+                const chunk = file.slice(start, end);
+
+                const formData = new FormData();
+                formData.append('UploadFile', chunk);
+                formData.append('FileName', file.name);
+                formData.append('ChunkNumber', currentChunk);
+                formData.append('TotalChunks', chunks);
+                try {
+                    const response = await fetch('@Model.UploadUrl', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${JwtToken}`,
+                            'RequestVerificationToken': '@GetAntiXsrfRequestToken()'
+                        },
+                        body: formData
+                    });
+                    const responseText = await response.text();
+                    console.log(responseText);
+
+                    if (!response.ok) {
+                        throw new Error(`Error: ${response.statusText} - ${responseText}`);
+                    }
+                } catch (error) {
+                    console.log(error.message);
+                    document.getElementById('progress').innerText = `Error uploading chunk ${currentChunk + 1}: ${error.message}`;
+                    return;
+                }
+
+                currentChunk++;
+                document.getElementById('progress').innerText = `Uploaded ${currentChunk} of ${chunks} chunks/MBs`;
+            }
+            document.getElementById('progress').innerText = 'Upload complete';
+        }
+    </script>
+}
